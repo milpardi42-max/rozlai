@@ -5,6 +5,8 @@ import crypto from "crypto";
 import { getSession } from "@/lib/auth";
 import { withNoStore } from "@/lib/http";
 import { clientIp, tooManyAttempts, recordAttempt, retryAfterSeconds } from "@/lib/rate-limit";
+import { watermarkBuffer } from "@/lib/files/watermark";
+import { checkSeamless } from "@/lib/files/seamless";
 
 export const dynamic = "force-dynamic";
 
@@ -99,7 +101,9 @@ async function uploadLocal(buffer: Buffer, filename: string): Promise<string> {
   const uploadsDir = path.join(process.cwd(), "public", "images", "uploads");
   await fs.mkdir(uploadsDir, { recursive: true });
   await fs.writeFile(path.join(uploadsDir, filename), buffer);
-  return `/images/uploads/${filename}`;
+  // Served via /api/pub — runtime-visible even with a standalone build,
+  // unlike /public which `next start` snapshots at build time.
+  return `/api/pub/${filename}`;
 }
 
 /**
@@ -176,6 +180,15 @@ export async function POST(req: Request) {
 
   try {
     let url: string;
+    let watermarkedUrl: string | null = null;
+
+    // Phase 2: bake a watermarked WebP derivative alongside the original
+    // (null when the image is too small or vips can't decode it).
+    const wm = await watermarkBuffer(buffer);
+    const wmName = `${hash}-w.webp`;
+
+    // Phase 3: seamless-repeat probe (advisory — helps artists catch broken tiles)
+    const seam = await checkSeamless(buffer);
 
     if (
       process.env.CLOUDINARY_CLOUD_NAME &&
@@ -183,13 +196,16 @@ export async function POST(req: Request) {
       process.env.CLOUDINARY_API_SECRET
     ) {
       url = await uploadToCloudinary(buffer, ext);
+      if (wm) watermarkedUrl = await uploadToCloudinary(wm, "webp").catch(() => null);
     } else if (process.env.BLOB_READ_WRITE_TOKEN) {
       url = await uploadToVercelBlob(buffer, filename);
+      if (wm) watermarkedUrl = await uploadToVercelBlob(wm, wmName).catch(() => null);
     } else {
       url = await uploadLocal(buffer, filename);
+      if (wm) watermarkedUrl = await uploadLocal(wm, wmName).catch(() => null);
     }
 
-    return NextResponse.json({ ok: true, url }, withNoStore());
+    return NextResponse.json({ ok: true, url, watermarkedUrl, seam }, withNoStore());
   } catch (e) {
     console.error("[artist/upload] storage error:", e);
     return NextResponse.json({ ok: false, error: "storage_error" }, withNoStore({ status: 502 }));

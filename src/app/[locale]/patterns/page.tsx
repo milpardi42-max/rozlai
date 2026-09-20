@@ -6,6 +6,7 @@ import { PatternGrid } from "@/components/product/Grids";
 import { GridSkeleton } from "@/components/ui/States";
 import { enrichPattern, getSite } from "@/lib/data/queries";
 import { filterPatterns, type SP } from "@/lib/data/filters";
+import { isExclusiveDelisted } from "@/lib/types";
 import { dictionaries } from "@/lib/i18n/dictionary";
 import type { Locale } from "@/lib/i18n/types";
 import { t } from "@/lib/utils";
@@ -26,10 +27,12 @@ export default async function PatternsPage({ params, searchParams }: { params: P
   const fa = locale === "fa";
   const catMap = Object.fromEntries(site.categories.map((c) => [c.slug, c.id]));
   const spaceMap = Object.fromEntries(site.spaces.map((s) => [s.slug, s.id]));
-  const list = filterPatterns(site.patterns, sp, catMap, spaceMap).map((p) => enrichPattern(site, p));
+  // Phase 2 — exclusively-sold patterns are delisted from discovery surfaces
+  const sellable = site.patterns.filter((p) => !isExclusiveDelisted(p));
+  const list = filterPatterns(sellable, sp, catMap, spaceMap).map((p) => enrichPattern(site, p));
 
   // counts per category (unfiltered base, for sidebar badges)
-  const base = site.patterns;
+  const base = sellable;
   const categories = site.categories
     .slice()
     .sort((a, b) => a.order - b.order)

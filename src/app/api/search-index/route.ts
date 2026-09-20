@@ -14,7 +14,9 @@ export const revalidate = 300;
 export async function GET() {
   const site = await getContent();
   const body = {
-    patterns: site.patterns.map(({ slug, title, image, sku }) => ({ slug, title, image, sku })),
+    patterns: site.patterns
+      .filter((p) => !p.exclusiveSale)
+      .map(({ slug, title, image, sku }) => ({ slug, title, image, sku })),
     products: site.products.map(({ slug, title, sku, colors }) => ({ slug, title, sku, image: colors[0]?.image ?? "" })),
     artists: site.artists.map(({ slug, name, profession, avatar }) => ({ slug, name, profession, avatar })),
     portfolios: site.portfolios.map(({ slug, title, cover }) => ({ slug, title, cover })),

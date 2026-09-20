@@ -6,8 +6,10 @@ import Link from "next/link";
 import {
   BarChart3,
   Bell,
+  BookOpen,
   Check,
   CheckCircle2,
+  FileArchive,
   Crown,
   ExternalLink,
   Heart,
@@ -46,7 +48,7 @@ import { faNum, formatPrice, href } from "@/lib/utils";
 import type { Artist, Category, Colorway, Pattern, Product, Space } from "@/lib/types";
 import type { Order } from "@/lib/data/orders";
 
-type Tab = "overview" | "patterns" | "products" | "profile" | "stats" | "shop" | "plan";
+type Tab = "overview" | "patterns" | "products" | "profile" | "stats" | "shop" | "plan" | "earnings";
 type FormMode = "idle" | "new-pattern" | "new-product" | "edit-pattern" | "edit-product";
 
 interface ArtistData {
@@ -143,6 +145,7 @@ export function ArtistDashboard() {
     { id: "products", label: fa ? `محصولات (${data?.products.length ?? 0})` : `Products (${data?.products.length ?? 0})`, icon: <PackagePlus className="h-4 w-4" /> },
     { id: "profile", label: fa ? "پروفایل" : "Profile", icon: <User className="h-4 w-4" /> },
     { id: "stats", label: fa ? "آمار" : "Stats", icon: <BarChart3 className="h-4 w-4" /> },
+    { id: "earnings", label: fa ? "درآمد و تسویه" : "Earnings", icon: <DollarSign className="h-4 w-4" /> },
     { id: "shop", label: fa ? "خرید از فروشگاه" : "Shop", icon: <ShoppingBag className="h-4 w-4" /> },
     { id: "plan", label: fa ? "پلن و پروفایل عمومی" : "Plan & Public Profile", icon: <Crown className="h-4 w-4" /> },
   ];
@@ -179,6 +182,14 @@ export function ArtistDashboard() {
             </div>
           </div>
           <div className="flex items-center gap-2 pb-1">
+            <Link href={href(locale as "fa" | "en", "/artist/files")} className="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-sm text-foreground-secondary transition hover:border-accent hover:text-accent">
+              <FileArchive className="h-3.5 w-3.5" />
+              {fa ? "فایل‌های ماستر" : "Master files"}
+            </Link>
+            <Link href={href(locale as "fa" | "en", "/upload-guide")} className="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-sm text-foreground-secondary transition hover:border-accent hover:text-accent">
+              <BookOpen className="h-3.5 w-3.5" />
+              {fa ? "راهنمای آپلود" : "Upload guide"}
+            </Link>
             <Link href={href(locale as "fa" | "en", "/shop")} className="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-sm text-foreground-secondary transition hover:border-accent hover:text-accent">
               <Store className="h-3.5 w-3.5" />
               {fa ? "فروشگاه" : "Shop"}
@@ -319,6 +330,7 @@ export function ArtistDashboard() {
             {tab === "stats" && <StatsPanel data={data} fa={fa} locale={locale} orders={orders} />}
             {tab === "shop" && <ShopPanel fa={fa} locale={locale} />}
             {tab === "plan" && <PlanPanel fa={fa} locale={locale} />}
+            {tab === "earnings" && <EarningsPanel fa={fa} locale={locale} />}
           </main>
         </div>
       </div>
@@ -935,6 +947,127 @@ function PlanPanel({ fa, locale }: { fa: boolean; locale: string }) {
           </p>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Earnings Panel (Phase 3 — royalty statement)                          */
+/* ------------------------------------------------------------------ */
+interface EarningsData {
+  artistId: string;
+  artistName?: { fa: string; en: string } | null;
+  royaltyPercent: number;
+  salesCount: number;
+  grossToman: number;
+  royaltyToman: number;
+  paidOutToman: number;
+  balanceToman: number;
+  rows: {
+    orderId: string;
+    at: string;
+    patternId: string;
+    patternTitle?: { fa: string; en: string } | null;
+    license: string;
+    grossToman: number;
+    royaltyToman: number;
+  }[];
+}
+
+function EarningsPanel({ fa, locale }: { fa: boolean; locale: string }) {
+  const [data, setData] = useState<EarningsData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const r = await fetch("/api/artist/earnings", { ...SESSION_FETCH });
+        if (!r.ok) throw new Error();
+        const d = (await r.json()) as { ok: boolean; earnings?: EarningsData };
+        if (!d.ok || !d.earnings) throw new Error();
+        setData(d.earnings);
+      } catch {
+        setError(true);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  if (loading) return <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-accent" /></div>;
+  if (error || !data) {
+    return <ErrorState message={fa ? "بارگذاری اطلاعات درآمد ممکن نشد." : "Could not load earnings."} onRetry={() => window.location.reload()} />;
+  }
+
+  const toman = (n: number) =>
+    fa ? `${n.toLocaleString("fa-IR")} تومان` : `${n.toLocaleString("en-US")} Toman`;
+  const licenseLabel = (lic: string) =>
+    lic === "exclusive" ? (fa ? "اختصاصی" : "Exclusive") : lic === "commercial" ? (fa ? "تجاری" : "Commercial") : (fa ? "شخصی" : "Personal");
+
+  const kpis = [
+    { label: fa ? "فروشیده‌ها" : "Sales", value: fa ? data.salesCount.toLocaleString("fa-IR") : String(data.salesCount), icon: <ShoppingBag className="h-5 w-5" />, tone: "text-accent bg-accent/10" },
+    { label: fa ? `درآمد شما (${data.royaltyPercent}٪)` : `Your share (${data.royaltyPercent}%)`, value: toman(data.royaltyToman), icon: <DollarSign className="h-5 w-5" />, tone: "text-blue bg-blue/10" },
+    { label: fa ? "تسویه‌شده" : "Paid out", value: toman(data.paidOutToman), icon: <CheckCircle2 className="h-5 w-5" />, tone: "text-primary bg-primary/10" },
+    { label: fa ? "مانده قابل تسویه" : "Open balance", value: toman(data.balanceToman), icon: <Package className="h-5 w-5" />, tone: "text-success bg-success/10" },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-2xl border border-border bg-surface p-5 shadow-soft">
+        <p className="font-semibold">{fa ? "درآمد فروش دیجیتال" : "Digital sales income"}</p>
+        <p className="mt-1 text-sm text-foreground-secondary">
+          {fa
+            ? `سهم شما از هر فروش تأییدشده ${data.royaltyPercent.toLocaleString("fa-IR")}٪ است؛ مانده پس از کسر تسویه‌های انجام‌شده به‌صورت دوره‌ای پرداخت می‌شود.`
+            : `You earn ${data.royaltyPercent}% of every verified sale; the open balance is settled periodically.`}
+        </p>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {kpis.map((k) => (
+          <div key={k.label} className="rounded-2xl border border-border bg-surface p-5 shadow-soft">
+            <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${k.tone}`}>{k.icon}</div>
+            <p className="mt-4 font-display text-lg font-bold tabular">{k.value}</p>
+            <p className="mt-1 text-caption text-foreground-secondary">{k.label}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-2xl border border-border bg-surface shadow-soft">
+        <p className="border-b border-border px-6 py-4 font-semibold">{fa ? "جزئیات فروش‌ها" : "Sales ledger"}</p>
+        {data.rows.length === 0 ? (
+          <div className="p-6">
+            <EmptyState
+              title={fa ? "هنوز فروشی ندارید." : "No sales yet."}
+              description={fa ? "وقتی اولین طرح دیجیتال شما فروخته شود، اینجا نمایش داده می‌شود." : "Your digital sales will appear here."}
+            />
+          </div>
+        ) : (
+          <div className="divide-y divide-border">
+            {data.rows.map((row) => (
+              <div key={row.orderId} className="flex flex-wrap items-center gap-3 px-6 py-3.5">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-background-secondary">
+                  <Palette className="h-4 w-4 text-muted" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">
+                    {row.patternTitle ? (locale === "fa" ? row.patternTitle.fa : row.patternTitle.en) : row.patternId}
+                  </p>
+                  <p className="text-caption text-foreground-secondary" dir="auto">
+                    {licenseLabel(row.license)} · {new Date(row.at).toLocaleDateString(fa ? "fa-IR" : "en-US")}
+                  </p>
+                </div>
+                <div className="text-end">
+                  <p className="text-sm font-semibold tabular text-success">{toman(row.royaltyToman)}</p>
+                  <p className="text-caption text-foreground-secondary tabular">
+                    {fa ? "فروش:" : "gross:"} {toman(row.grossToman)}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

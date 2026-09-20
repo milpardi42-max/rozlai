@@ -152,6 +152,9 @@ export async function POST(req: Request) {
     isNew: true,
     createdAt: new Date().toISOString(),
     likes: 0,
+    // Digital-sale fields (Phase 1/2). exclusiveSale is never set here — it is
+    // stamped only by the payment callback once an exclusive purchase verifies.
+    ...(b.digital ? { digital: true, licensePrices: (b.licensePrices as Pattern["licensePrices"]) } : {}),
   };
   await saveContent({ ...content, patterns: [...content.patterns, pattern] });
   return NextResponse.json({ ok: true, pattern }, withNoStore());
@@ -184,6 +187,9 @@ export async function PUT(req: Request) {
   if (session.role !== "admin" && content.patterns[idx].artistId !== session.artistId) {
     return unauthorized();
   }
+  // exclusiveSale is stamped only by the verified-payment callback (Phase 2);
+  // artists must not self-delist or fake-transfer rights. Admins may override.
+  if (session.role !== "admin") delete body.exclusiveSale;
   const updated: Pattern = { ...content.patterns[idx], ...body } as Pattern;
   const patterns = content.patterns.map((p, i) => (i === idx ? updated : p));
   await saveContent({ ...content, patterns });

@@ -22,6 +22,12 @@ const POLICIES: Record<string, { window: number; max: number }> = {
   profile: { window: 5 * 60 * 1000, max: 30 },
   /** Upload: 20 per 5 min */
   upload: { window: 5 * 60 * 1000, max: 20 },
+  /** Digital checkout starts: 20 per 5 min */
+  checkout: { window: 5 * 60 * 1000, max: 20 },
+  /** Secure download hits: 60 per 5 min (a library page can fire several at once) */
+  download: { window: 5 * 60 * 1000, max: 60 },
+  /** Watermark encode misses: 40 per 5 min (cache hits are always free) */
+  wmimg: { window: 5 * 60 * 1000, max: 40 },
   /** Default (fallback) */
   default: { window: 15 * 60 * 1000, max: 8 },
 };

@@ -6,8 +6,8 @@
  */
 import Image from "next/image";
 import Link from "next/link";
-import { useMemo, useState } from "react";
-import { Check, FileDown, Shield } from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
+import { BadgeCheck, Check, FileDown, Shield } from "lucide-react";
 import { Gallery } from "@/components/product/Gallery";
 import { PatternBuyBox } from "@/components/product/PatternBuyBox";
 import { ColorwayDots, resolveColorways } from "@/components/product/ColorwayDots";
@@ -21,10 +21,15 @@ export function PatternDetailView({
   pattern,
   artist,
   spaces,
+  digitalSlot,
+  soldExclusively,
 }: {
   pattern: PatternCardData;
   artist: Artist | null;
   spaces: Space[];
+  digitalSlot?: ReactNode;
+  /** Phase 2 — rights transferred; no further licence sales on this page. */
+  soldExclusively?: boolean;
 }) {
   const { locale, dict } = useLocale();
   const colorways = useMemo(() => resolveColorways(pattern), [pattern]);
@@ -156,8 +161,30 @@ export function PatternDetailView({
             )}
           </dl>
 
-          {/* Buy box without duplicate colourway UI — pass controlled selection */}
-          <PatternBuyBox pattern={pattern} colorwayId={cwId} onColorwayChange={setCwId} hideColorwayPicker />
+          {/* Buy box without duplicate colourway UI — pass controlled selection.
+              Hidden once the exclusive rights have been sold (Phase 2). */}
+          {!soldExclusively && (
+            <PatternBuyBox pattern={pattern} colorwayId={cwId} onColorwayChange={setCwId} hideColorwayPicker />
+          )}
+
+          {/* Phase 1 — instant-download licence panel (digital patterns only) */}
+          {!soldExclusively && digitalSlot}
+
+          {soldExclusively && (
+            <div role="status" className="mt-6 rounded-lg border border-border bg-background-secondary p-5">
+              <div className="flex items-center gap-2.5">
+                <BadgeCheck className="h-5 w-5 text-accent" />
+                <h2 className="text-base font-semibold">{dict.digital.exclusiveSoldTitle}</h2>
+              </div>
+              <p className="mt-2 text-sm text-foreground-secondary">{dict.digital.exclusiveSoldDesc}</p>
+              <Link
+                href={href(locale, "/patterns")}
+                className="mt-4 inline-flex h-10 items-center gap-2 rounded-md bg-foreground px-5 text-sm font-medium text-background"
+              >
+                {dict.digital.exclusiveSoldCta}
+              </Link>
+            </div>
+          )}
 
           <ul className="mt-8 space-y-3 text-sm text-foreground-secondary">
             <li className="flex gap-2">

@@ -153,6 +153,104 @@ audience is elsewhere.
 `npm ci && npm run build && npm start` on Node 20+. Set the same env vars; without Redis/Blob, content persists
 to `data/content.json` — keep that directory on a persistent volume.
 
+## Digital pattern sales (Phase 1)
+
+Full **upload → review → sell → secure download** cycle for digital licences of
+patterns (Patternbank-style tiers: `personal` / `commercial` / `exclusive`).
+
+**Artist side**
+- `/[locale]/artist/files` — private master-file uploader (ZIP · TIFF · PSD/PSB · AI ·
+  EPS · PDF · PNG · JPG · SVG, ≤ 200 MB) with magic-byte sniffing + per-tier attach.
+- `/[locale]/upload-guide` — public standards page (formats, 300+ DPI, seamless
+  repeat, ICC profile, naming, spec-sheet), linked from the artist dashboard.
+- Files land in private storage with status `pending`; an admin approves/rejects
+  (with note) under **Admin → فایل‌های ماستر** (`/api/admin/files`).
+
+**Buyer side**
+- Digital patterns (`digital: true` + approved files) show an instant-download
+  licence panel on the PDP.
+- `POST /api/digital/checkout` → ZarinPal v4 (`ZARINPAL_MERCHANT_ID`, prices are
+  stored in Toman → sent ×10 as Rial; `ZARINPAL_SANDBOX=1` for the sandbox).
+  **No merchant id → mock gateway** so the whole cycle runs locally.
+- `/api/digital/callback` verifies, mints an **entitlement** (10 downloads/file,
+  90-day window) and lands the buyer on `/[locale]/downloads` — their library.
+- `GET /api/download/[entitlementId]/[fileId]` is the only way bytes leave:
+  signed-in owner + valid window + licence-covered + approved + under cap.
+  S3 backend → 302 to a 5-minute presigned URL; local backend → authenticated stream.
+
+**Storage** — master binaries go to S3-compatible object storage when configured
+(`S3_ENDPOINT`/`S3_BUCKET`/`S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`, region optional
+— works with Cloudflare R2 & Backblaze B2); otherwise privately in `data/private/`.
+Both fall under the same registry pattern as the rest of the codebase
+(Upstash Redis iff configured, else `data/{files,payments,entitlements}.json`).
+
+## Digital pattern sales (Phase 2)
+
+**Watermarked previews.** Digital patterns never expose raw pixels publicly:
+every PDP preview is rewritten through `GET /api/wmimg?src=…`, which bakes a
+tiled diagonal “Rosie Atelier” overlay (sharp/libvips) and caches the derivative
+on disk (`data/wm-cache/`, encode misses rate-limited). New uploads through
+`/api/artist/upload` additionally receive a baked `-w.webp` derivative up front
+(`watermarkedUrl` in the response). Local runtime uploads are served via
+`GET /api/pub/<file>` because a standalone `next start` snapshots `/public` at
+build time.
+
+**Licence certificate (PDF).** `GET /api/license/[entitlementId]` — owner/admin
+only — generates the official A4 licence certificate (dependency-free, PDF core
+fonts, English): order ref, licensee, artist, tier terms, delivered file list,
+and an HMAC verification code so forged certificates can be detected. Linked
+from every purchase in `/[locale]/downloads`.
+
+**Exclusive sale → auto-delist.** When a verified payment lands on an
+`exclusive` licence, the callback stamps `pattern.exclusiveSale` and the design
+instantly disappears from storefront discovery (patterns grid, home, nav mega
+menu, search index + sitemap — `revalidatePath` busts their caches), the PDP
+swaps both buy boxes for a “sold exclusively” notice, and checkout permanently
+rejects further licences (`409 exclusive_sold`). Existing buyers keep their
+downloads and certificates; physical products derived from the design (fabric
+prints etc.) stay on sale. Posting `exclusiveSale` through artist POST/PUT is
+rejected — only the payment callback can stamp it; admins may override.
+
+## Digital pattern sales (Phase 3)
+
+**Automatic seamless-repeat check.** Every master-file upload of a raster tile
+(TIFF/PNG/JPG) and every preview upload runs `checkSeamless()`
+(`src/lib/files/seamless.ts`): the tile is down-sampled to 256² raw pixels and
+the mean |ΔRGB| across the wrap edges is compared against the average
+adjacent-pixel difference of the whole texture. Score ≈1.0 → seamless; the
+report ({seamless, ratioX, ratioY, score}) is stored on the file record
+(`DeliverableFile.seam`) and shown as an advisory badge in the artist's master
+files page and the admin moderation queue. It never blocks an upload —
+threshold `1.65` was tuned on synthetic tiles
+(`scripts/test-phase3.ts`: seamless stripe tile scores 1.04, broken tile 38.7).
+
+**Automatic mockups.** `POST /api/artist/mockups` (multipart `file`, ≤8 MB,
+artist/admin) renders four presentation-ready previews
+(`src/lib/files/mockups.ts`): normalized tile (512²), 3×3 repeat (1020²),
+wallpaper with lighting gradient + baseboard (1600×1100) and fabric with soft
+wave shading (1200²). Tiling is done with SVG `<pattern>` rendered through
+librsvg/sharp — note librsvg can't decode WebP inside SVG `<image>`, so the
+embedded data-URI is PNG. Every output is WebP and watermarked; artists get a
+dropzone UI at `/[locale]/artist/files` («استودیو موکاپ خودکار») together with
+the instant seamless verdict.
+
+**Persian licence certificate (print).** `/[locale]/license/[entitlementId]` —
+owner/admin only — renders the licence certificate as a styled FA/EN HTML page
+with the bundled Iransans webfont and a print-to-PDF button (server-side PDF
+generation can't shape Arabic/Persian script without a font pipeline, so the
+official downloadable PDF stays English and the FA certificate is delivered as
+a printable document). Print CSS isolates the certificate node. Linked from
+every purchase in `/[locale]/downloads` next to the EN PDF.
+
+**Artist royalties & payouts.** Verified payments in
+`data/payments.json` joined to pattern ownership produce each artist's royalty
+(`src/lib/data/earnings.ts`): gross × `ARTIST_ROYALTY_PERCENT` (default 70%).
+Site-owned designs count as platform revenue. Settlements are recorded in
+`data/payouts.json` (`src/lib/data/payouts.ts`). Artist sees the full statement
+in the dashboard's «درآمد و تسویه» tab (`GET /api/artist/earnings`; admins can
+pass `?artistId=`); admins record payouts in the panel's «درآمد و تسویه»
+section (`GET`/`POST /api/admin/payouts`). Open balance = royalty − payouts.
+
 ## Performance notes
 
 - All page payloads render on demand; images use `next/image` with explicit `sizes`.

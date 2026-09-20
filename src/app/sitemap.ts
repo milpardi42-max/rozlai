@@ -10,7 +10,8 @@ const STATIC_PAGES = [
 
 /** collection (key of SiteContent) → route segment its detail pages live under */
 const slugCollections = (site: SiteContentLike): [string, { slug: string }[]][] => [
-  ["patterns", site.patterns],
+  // exclusively-sold patterns are delisted — no SEO surface for them
+  ["patterns", site.patterns.filter((p) => !("exclusiveSale" in p && p.exclusiveSale))],
   ["shop", site.products],
   ["artists", site.artists],
   ["portfolio", site.portfolios],
@@ -22,7 +23,7 @@ const slugCollections = (site: SiteContentLike): [string, { slug: string }[]][] 
 ];
 
 interface SiteContentLike {
-  patterns: { slug: string }[];
+  patterns: { slug: string; exclusiveSale?: { orderId: string; at: string } }[];
   products: { slug: string }[];
   artists: { slug: string }[];
   portfolios: { slug: string }[];
