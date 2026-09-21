@@ -7,6 +7,8 @@ import { createOrder } from "@/lib/data/orders";
 import { createPayment, rekeyPayment } from "@/lib/data/payments";
 import { listApprovedForPattern } from "@/lib/files/storage";
 import { startPayment, siteBaseUrl } from "@/lib/payments/zarinpal";
+import { startCheckout } from "@/lib/payments/stripe";
+import { resolveDiscountCode } from "@/lib/data/discounts";
 import { DEFAULT_LICENSE_PRICES, LICENSE_COVERAGE, type LicenseTier } from "@/lib/types";
 import { LOCALES, type Locale, type Localized } from "@/lib/i18n/types";
 
@@ -40,13 +42,21 @@ export async function POST(req: Request) {
   recordAttempt(rlKey);
 
   const body = (await req.json().catch(() => null)) as
-    | { patternId?: string; license?: string; locale?: string }
+    | { patternId?: string; license?: string; locale?: string; gateway?: string; discountCode?: string }
     | null;
   const license = body?.license as LicenseTier;
   if (!body?.patternId || !LICENSES.includes(license)) {
     return NextResponse.json({ ok: false, error: "invalid_payload" }, withNoStore({ status: 400 }));
   }
   const locale: Locale = LOCALES.includes(body.locale as Locale) ? (body.locale as Locale) : "fa";
+  // Gateway: USD buyers (en locale) get Stripe when an USD price exists;
+  // explicit override wins for shared screens (wallet page, etc.).
+  const gateway =
+    body?.gateway === "stripe" || body?.gateway === "zarinpal"
+      ? body.gateway
+      : locale === "en"
+        ? "stripe"
+        : "zarinpal";
 
   const content = await getContent();
   const pattern = content.patterns.find((p) => p.id === body.patternId);
@@ -68,8 +78,31 @@ export async function POST(req: Request) {
   }
 
   const price = pattern.licensePrices?.[license] ?? DEFAULT_LICENSE_PRICES[license];
+
+  // Phase 5 — optional discount/affiliate code (validated server-side)
+  let discountCode: string | undefined;
+  let payToman = price.fa;
+  let payUsdCents = Math.max(50, Math.round(price.en * 100));
+  if (body?.discountCode?.trim()) {
+    const resolved = await resolveDiscountCode(body.discountCode, price.fa, payUsdCents);
+    if (!resolved.ok) {
+      return NextResponse.json(
+        { ok: false, error: `discount_${resolved.error}` },
+        withNoStore({ status: 400 }),
+      );
+    }
+    discountCode = resolved.record.code;
+    payToman = resolved.discountedToman;
+    payUsdCents = resolved.discountedUsdCents;
+  }
+
   // Pattern prices on this site are stored in Toman; ZarinPal v4 expects Rial.
-  const amountRial = Math.max(1000, price.fa * 10);
+  const amountRial = Math.max(1000, payToman * 10);
+
+  // USD checkout requires a real USD price on the pattern (> $0.50 after discount)
+  if (gateway === "stripe" && payUsdCents < 50) {
+    return NextResponse.json({ ok: false, error: "no_usd_price" }, withNoStore({ status: 400 }));
+  }
 
   const title = t(pattern.title, locale);
   let order;
@@ -89,15 +122,22 @@ export async function POST(req: Request) {
           sku: `${pattern.sku}-${license.toUpperCase()}`,
           title: `${title} · ${license}`,
           image: pattern.image,
-          price,
+          price: gateway === "stripe" ? { fa: payToman, en: payUsdCents / 100 } : { fa: payToman, en: price.en },
           qty: 1,
         },
       ],
-      total: { fa: price.fa, en: price.en },
+      total: gateway === "stripe" ? { fa: payToman, en: payUsdCents / 100 } : { fa: payToman, en: price.en },
     });
   } catch {
     return NextResponse.json({ ok: false, error: "order_failed" }, withNoStore({ status: 500 }));
   }
+
+  // Toman equivalent of a USD charge — keeps analytics/earnings in one currency
+  // (tier.fa × actualUsd / tier.en, i.e. discounts carry over proportionally).
+  const tomanEquiv =
+    price.fa > 0 && price.en > 0
+      ? Math.max(0, Math.round(price.fa * ((payUsdCents / 100) / price.en)))
+      : payToman;
 
   const payment = await createPayment({
     orderId: order.id,
@@ -106,8 +146,32 @@ export async function POST(req: Request) {
     userId: session.id,
     email: session.email,
     locale,
-    amountRial,
+    amountRial: gateway === "stripe" ? tomanEquiv * 10 : amountRial,
+    grossAmountMinor: gateway === "stripe" ? payUsdCents : amountRial,
+    gateway,
+    currency: gateway === "stripe" ? "USD" : "IRR",
+    ...(discountCode ? { discountCode } : {}),
   });
+
+  if (gateway === "stripe") {
+    const started = await startCheckout({
+      amountUsdCents: payUsdCents,
+      successUrl: `${siteBaseUrl()}/api/digital/stripe-callback`,
+      cancelUrl: `${siteBaseUrl()}/${locale}/patterns/${pattern.slug}?purchase=cancelled`,
+      email: session.email,
+      description: `${title} — ${license} licence`,
+      metadata: { orderId: order.id, authority: payment.authority, patternId: pattern.id },
+      authorityHint: payment.authority,
+    });
+    if ("error" in started) {
+      return NextResponse.json({ ok: false, error: started.error }, withNoStore({ status: 502 }));
+    }
+    await rekeyPayment(payment.authority, started.authority);
+    return NextResponse.json(
+      { ok: true, redirectUrl: started.redirectUrl, orderId: order.id, mock: started.mock, gateway: "stripe" },
+      withNoStore(),
+    );
+  }
 
   const started = await startPayment({
     amountRial,
@@ -126,7 +190,7 @@ export async function POST(req: Request) {
   await rekeyPayment(payment.authority, started.authority);
 
   return NextResponse.json(
-    { ok: true, redirectUrl: started.redirectUrl, orderId: order.id, mock: started.mock },
+    { ok: true, redirectUrl: started.redirectUrl, orderId: order.id, mock: started.mock, gateway: "zarinpal" },
     withNoStore(),
   );
 }

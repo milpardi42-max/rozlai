@@ -7,6 +7,7 @@ import { getContent } from "@/lib/data/store";
 import { addFile, listFiles, storeBinary, storageBackendLabel } from "@/lib/files/storage";
 import { MAX_MASTER_BYTES, detectMasterExt, reconcileExt, type DeliverableFile } from "@/lib/files/types";
 import { checkSeamless } from "@/lib/files/seamless";
+import { scanBuffer } from "@/lib/files/antivirus";
 import type { LicenseTier } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -106,6 +107,15 @@ export async function POST(req: Request) {
         detail: "Detected content does not match an allowed master format (zip/tif/psd/ai/eps/pdf/png/jpg/svg).",
       },
       withNoStore({ status: 415 }),
+    );
+  }
+
+  // Phase 4 — ClamAV scan when enabled; infected OR unreachable (when enabled) blocks the upload.
+  const av = await scanBuffer(buffer, file.name);
+  if (!av.ok) {
+    return NextResponse.json(
+      { ok: false, error: av.unavailable ? "scanner_unavailable" : "virus_detected", virus: av.virus },
+      withNoStore({ status: av.unavailable ? 503 : 422 }),
     );
   }
 

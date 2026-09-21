@@ -70,6 +70,9 @@ export function MasterFiles() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [uploadPct, setUploadPct] = useState<number | null>(null);
+
+  const MAX_SINGLE_UPLOAD = 200 * 1024 * 1024; // single-shot request body ceiling
 
   const L = {
     title: fa ? "فایل‌های ماستر (تحویل دانلودی)" : "Master files (digital delivery)",
@@ -92,8 +95,8 @@ export function MasterFiles() {
     fileLabelPh: fa ? "مثلاً «فایل ماستر TIFF بی‌درز ۳۰۰DPI»" : "e.g. “Seamless TIFF master 300DPI”",
     chooseFile: fa ? "انتخاب فایل" : "Choose file",
     formats: fa
-      ? "ZIP · TIFF · PSD · AI · EPS · PDF · PNG · JPG · SVG — تا ۲۰۰ مگابایت"
-      : "ZIP · TIFF · PSD · AI · EPS · PDF · PNG · JPG · SVG — up to 200 MB",
+      ? "ZIP · TIFF · PSD · AI · EPS · PDF · PNG · JPG · SVG — تا ۲۰۰ مگابایت تکی؛ بزرگ‌تر با آپلود چندبخشی (S3)"
+      : "ZIP · TIFF · PSD · AI · EPS · PDF · PNG · JPG · SVG — up to 200 MB single; larger via multipart (S3)",
     upload: fa ? "آپلود برای بازبینی" : "Upload for review",
     uploading: fa ? "در حال آپلود…" : "Uploading…",
     uploaded: fa ? "آپلود شد و در صف بازبینی قرار گرفت" : "Uploaded and queued for review",
@@ -147,29 +150,128 @@ export function MasterFiles() {
     setError(null);
     setDone(false);
     try {
-      const form = new FormData();
-      form.append("file", file);
-      form.append("patternId", patternId);
-      form.append("tier", tier);
-      if (label.trim()) form.append("label", label.trim());
-      const res = await fetch("/api/artist/upload-file", {
-        method: "POST",
-        credentials: "same-origin",
-        body: form,
-      });
-      const data = (await res.json()) as { ok?: boolean; error?: string };
-      if (!res.ok || !data.ok) {
-        setError(data.error ?? `error_${res.status}`);
-        return;
+      // Phase 4 — big files (>200 MB) go straight to S3 with multipart presigned URLs
+      if (file.size > MAX_SINGLE_UPLOAD && backend === "s3") {
+        await uploadMultipart(file);
+      } else {
+        const form = new FormData();
+        form.append("file", file);
+        form.append("patternId", patternId);
+        form.append("tier", tier);
+        if (label.trim()) form.append("label", label.trim());
+        const res = await fetch("/api/artist/upload-file", {
+          method: "POST",
+          credentials: "same-origin",
+          body: form,
+        });
+        const data = (await res.json()) as { ok?: boolean; error?: string };
+        if (!res.ok || !data.ok) {
+          setError(data.error ?? `error_${res.status}`);
+          return;
+        }
       }
       setDone(true);
       setLabel("");
       if (fileInput.current) fileInput.current.value = "";
       await load();
-    } catch {
-      setError("network_error");
+    } catch (e) {
+      setError(e instanceof Error && e.message.startsWith("multipart_") ? e.message : "network_error");
     } finally {
       setBusy(false);
+      setUploadPct(null);
+    }
+  }
+
+  /** Browser → presigned part PUTs (S3/R2), then server-side complete + registry record. */
+  async function uploadMultipart(file: File) {
+    const ext = (file.name.split(".").pop() ?? "").toLowerCase();
+
+    const begin = await fetch("/api/artist/upload-file/multipart", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "begin", ext, size: file.size }),
+    });
+    const bData = (await begin.json()) as {
+      ok?: boolean;
+      uploadId?: string;
+      key?: string;
+      partBytes?: number;
+      partCount?: number;
+      urls?: string[];
+      urlPage?: number;
+      totalPages?: number;
+      error?: string;
+    };
+    if (!begin.ok || !bData.ok || !bData.uploadId || !bData.key || !bData.urls) {
+      throw new Error(`multipart_${bData.error ?? begin.status}`);
+    }
+
+    let { urls, urlPage = 0 } = bData;
+    const totalPages = bData.totalPages ?? 1;
+    const partBytes = bData.partBytes ?? 16 * 1024 * 1024;
+    const partCount = bData.partCount ?? Math.ceil(file.size / partBytes);
+    const etags: { partNumber: number; etag: string }[] = [];
+    let globalPart = 0;
+
+    for (let page = 0; page < totalPages; page++) {
+      if (page > 0) {
+        const res = await fetch("/api/artist/upload-file/multipart", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ action: "urls", uploadId: bData.uploadId, key: bData.key, size: file.size, page }),
+        });
+        const d = (await res.json()) as { ok?: boolean; urls?: string[]; urlPage?: number; error?: string };
+        if (!res.ok || !d.ok || !d.urls) throw new Error(`multipart_${d.error ?? res.status}`);
+        urls = d.urls;
+        urlPage = d.urlPage ?? page;
+      }
+      for (let i = 0; i < urls.length; i++) {
+        const partNumber = urlPage * 200 + i + 1;
+        const start = (partNumber - 1) * partBytes;
+        const chunk = file.slice(start, Math.min(start + partBytes, file.size));
+        const res = await fetch(urls[i]!, {
+          method: "PUT",
+          headers: { "content-type": "application/octet-stream" },
+          body: chunk,
+        });
+        if (!res.ok) {
+          // best-effort abort so the bucket doesn't leak parts
+          await fetch("/api/artist/upload-file/multipart", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ action: "abort", uploadId: bData.uploadId, key: bData.key }),
+          });
+          throw new Error(`multipart_part_${res.status}`);
+        }
+        const etag = res.headers.get("etag") ?? String(partNumber);
+        etags.push({ partNumber, etag: etag.replace(/^"|"$/g, "") });
+        globalPart = partNumber;
+        setUploadPct(Math.round((globalPart / partCount) * 100));
+      }
+    }
+
+    const complete = await fetch("/api/artist/upload-file/multipart", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "complete",
+        uploadId: bData.uploadId,
+        key: bData.key,
+        size: file.size,
+        parts: etags,
+        patternId,
+        tier,
+        label: label.trim() || undefined,
+        filename: file.name,
+      }),
+    });
+    const cData = (await complete.json()) as { ok?: boolean; error?: string };
+    if (!complete.ok || !cData.ok) {
+      throw new Error(`multipart_${cData.error ?? complete.status}`);
     }
   }
 
@@ -266,7 +368,11 @@ export function MasterFiles() {
                 )}
               >
                 {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CloudUpload className="h-4 w-4" />}
-                {busy ? L.uploading : L.upload}
+                {busy
+                  ? uploadPct !== null
+                    ? `${L.uploading} ${fa ? uploadPct.toLocaleString("fa-IR") : uploadPct}٪`
+                    : L.uploading
+                  : L.upload}
               </button>
               {done && (
                 <span className="ms-3 inline-flex items-center gap-1.5 text-sm text-green-700 dark:text-green-300">

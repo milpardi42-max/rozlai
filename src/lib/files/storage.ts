@@ -22,7 +22,7 @@ import { readJsonStore, writeJsonStore } from "@/lib/files/persist";
 
 /* ─── S3 Signature V4 (minimal, dependency-free) ─────────────────── */
 
-function s3Config() {
+export function s3Config() {
   const { S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY } = process.env;
   if (!S3_ENDPOINT || !S3_BUCKET || !S3_ACCESS_KEY_ID || !S3_SECRET_ACCESS_KEY) return null;
   return {
@@ -34,15 +34,15 @@ function s3Config() {
   };
 }
 
-function sha256Hex(data: string | Buffer): string {
+export function sha256Hex(data: string | Buffer): string {
   return crypto.createHash("sha256").update(data).digest("hex");
 }
 
-function hmac(key: Buffer | string, data: string): Buffer {
+export function hmac(key: Buffer | string, data: string): Buffer {
   return crypto.createHmac("sha256", key).update(data, "utf8").digest();
 }
 
-function uriEncode(str: string, encodeSlash = false): string {
+export function uriEncode(str: string, encodeSlash = false): string {
   return str
     .split("")
     .map((ch) => {
@@ -56,19 +56,28 @@ function uriEncode(str: string, encodeSlash = false): string {
 /**
  * Build a SigV4 presigned URL for `method` on `key`.
  * Works for GET (download) and PUT (upload proxy). Valid `expires` seconds.
+ * `extraQuery` merges extra query params (e.g. multipart partNumber/uploadId).
  */
-export function presignS3Url(method: "GET" | "PUT", key: string, expires: number): string | null {
+export function presignS3Url(
+  method: "GET" | "PUT",
+  key: string,
+  expires: number,
+  extraQuery: Record<string, string> = {},
+): string | null {
   const cfg = s3Config();
   if (!cfg) return null;
 
   const host = `${cfg.bucket}.${new URL(cfg.endpoint).host}`;
   const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const amzDate = `${now.getUTCFullYear()}${pad(now.getUTCMonth() + 1)}${pad(now.getUTCDate())}T${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}Z`;
+  const amzDate = now
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\.\d{3}/, "");
   const dateStamp = amzDate.slice(0, 8);
   const scope = `${dateStamp}/${cfg.region}/s3/aws4_request`;
 
   const query: Record<string, string> = {
+    ...extraQuery,
     "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
     "X-Amz-Credential": `${cfg.accessKey}/${scope}`,
     "X-Amz-Date": amzDate,

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { getContent, saveContent } from "@/lib/data/store";
+import { getSubscription, planDef, quotaExceeded } from "@/lib/data/plans";
 import { withNoStore } from "@/lib/http";
 import type { Pattern, Product } from "@/lib/types";
 import crypto from "crypto";
@@ -79,6 +80,23 @@ export async function POST(req: Request) {
 
   const artistId = session.role === "admin" ? ((body.artistId as string | null) ?? null) : (session.artistId ?? null);
   const content = await getContent();
+
+  // Phase 5 — subscription quota: non-admin uploads are limited by the active plan
+  if (session.role !== "admin") {
+    const plan = planDef((await getSubscription(session.id)).planId);
+    const kind = body._type === "product" ? "product" : "pattern";
+    const owned = content[kind === "product" ? "products" : "patterns"].filter(
+      (p) => p.artistId != null && p.artistId === session.artistId,
+    ).length;
+    const blocked = quotaExceeded(plan, kind, owned);
+    if (blocked) {
+      return NextResponse.json(
+        { ok: false, error: "plan_quota", kind, limit: blocked.limit, plan: plan.id },
+        withNoStore({ status: 402 }),
+      );
+    }
+  }
+
   const categoryId = (body.categoryId as string | null) ?? (content.categories[0]?.id ?? "");
 
   if (!categoryId || !content.categories.some((c) => c.id === categoryId)) {

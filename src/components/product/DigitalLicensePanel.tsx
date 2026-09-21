@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, usePathname } from "next/navigation";
 import Link from "next/link";
-import { Check, Download, FileDown, Loader2, Lock, ShieldCheck } from "lucide-react";
+import { Check, Download, FileDown, Loader2, Lock, Percent, ShieldCheck, Tag } from "lucide-react";
 import { useLocale } from "@/components/providers/AppProviders";
 import { cn, formatPrice, href } from "@/lib/utils";
 import type { PublicFileMeta } from "@/lib/files/types";
@@ -32,6 +32,14 @@ export function DigitalLicensePanel({ patternId, licensePrices, files }: Props) 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [owned, setOwned] = useState<null | boolean>(null);
+  // Phase 5 — discount code field (+server-authoritative quote)
+  const [codeInput, setCodeInput] = useState("");
+  const [quote, setQuote] = useState<{
+    code: string;
+    percentOff: number;
+    toman: number;
+    usdCents: number;
+  } | null>(null);
 
   const tierLabels: Record<LicenseTier, { label: string; desc: string }> = {
     personal: { label: d.licensePersonal, desc: d.licensePersonalDesc },
@@ -70,6 +78,38 @@ export function DigitalLicensePanel({ patternId, licensePrices, files }: Props) 
     };
   }, [patternId]);
 
+  // Refresh the server-side quote whenever the tier or code changes
+  useEffect(() => {
+    if (!tier) {
+      setQuote(null);
+      return;
+    }
+    let alive = true;
+    fetch("/api/digital/quote", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ patternId, license: tier, discountCode: codeInput || undefined }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!alive || !data?.ok) return;
+        if (data.discount?.code) {
+          setQuote({
+            code: data.discount.code,
+            percentOff: data.discount.percentOff,
+            toman: data.discounted.toman,
+            usdCents: data.discounted.usdCents,
+          });
+        } else {
+          setQuote(null);
+        }
+      })
+      .catch(() => alive && setQuote(null));
+    return () => {
+      alive = false;
+    };
+  }, [tier, codeInput, patternId]);
+
   async function buy() {
     if (!tier || busy) return;
     setBusy(true);
@@ -79,7 +119,12 @@ export function DigitalLicensePanel({ patternId, licensePrices, files }: Props) 
         method: "POST",
         headers: { "content-type": "application/json" },
         credentials: "same-origin",
-        body: JSON.stringify({ patternId, license: tier, locale: params?.locale ?? locale }),
+        body: JSON.stringify({
+          patternId,
+          license: tier,
+          locale: params?.locale ?? locale,
+          ...(quote?.code ? { discountCode: quote.code } : {}),
+        }),
       });
       const data = (await res.json()) as { ok?: boolean; redirectUrl?: string; error?: string };
       if (res.status === 401) {
@@ -129,6 +174,7 @@ export function DigitalLicensePanel({ patternId, licensePrices, files }: Props) 
               const price = licensePrices?.[t] ?? DEFAULT_LICENSE_PRICES[t];
               const disabled = tierFiles.length === 0;
               const selected = tier === t;
+              const showDiscounted = selected && quote;
               return (
                 <button
                   key={t}
@@ -145,7 +191,20 @@ export function DigitalLicensePanel({ patternId, licensePrices, files }: Props) 
                 >
                   <span className="flex items-center justify-between gap-3">
                     <span className="text-sm font-semibold">{tierLabels[t].label}</span>
-                    <span className="text-sm font-medium tabular">{formatPrice(price, locale)}</span>
+                    <span className="text-sm font-medium tabular">
+                      {showDiscounted ? (
+                        <span className="flex items-baseline gap-2">
+                          <span className="text-caption font-normal text-foreground-secondary line-through">
+                            {formatPrice(price, locale)}
+                          </span>
+                          <span className="text-success">
+                            {formatPrice({ fa: quote.toman, en: quote.usdCents / 100 }, locale)}
+                          </span>
+                        </span>
+                      ) : (
+                        formatPrice(price, locale)
+                      )}
+                    </span>
                   </span>
                   <span className="mt-1 block text-caption text-foreground-secondary">
                     {disabled ? d.noTier : tierLabels[t].desc}
@@ -154,6 +213,29 @@ export function DigitalLicensePanel({ patternId, licensePrices, files }: Props) 
               );
             })}
           </div>
+
+          {/* Phase 5 — discount / affiliate code */}
+          <label className="mt-4 block">
+            <span className="flex items-center gap-1.5 text-label text-muted">
+              <Tag className="h-3 w-3" />
+              {locale === "fa" ? "کد تخفیف" : "Discount code"}
+            </span>
+            <input
+              value={codeInput}
+              onChange={(e) => setCodeInput(e.target.value)}
+              placeholder={locale === "fa" ? "مثلاً NOWRUZ30" : "e.g. LAUNCH20"}
+              dir="ltr"
+              className="mt-1.5 h-10 w-full rounded-md border border-border bg-background px-3 text-sm uppercase tracking-wide focus:border-foreground focus:outline-none"
+            />
+          </label>
+          {quote && (
+            <p className="mt-2 flex items-center gap-1.5 rounded-md bg-green-600/10 px-3 py-2 text-caption text-green-700 dark:text-green-300">
+              <Percent className="h-3 w-3" />
+              {locale === "fa"
+                ? `کد ${quote.code} فعال شد — ${quote.percentOff}% تخفیف اعمال می‌شود.`
+                : `Code ${quote.code} applied — ${quote.percentOff}% off.`}
+            </p>
+          )}
 
           {tier && (
             <div className="mt-4 rounded-md border border-border bg-background p-4">

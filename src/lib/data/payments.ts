@@ -11,6 +11,7 @@ import { readJsonStore, writeJsonStore } from "@/lib/files/persist";
  */
 
 export type PaymentStatus = "pending" | "paid" | "failed";
+export type PaymentGateway = "zarinpal" | "stripe";
 
 export interface PaymentRecord {
   authority: string;
@@ -22,6 +23,16 @@ export interface PaymentRecord {
   locale: Locale;
   /** Amount in Rial, as sent to the gateway (or the Toman amount ×10 in mock). */
   amountRial: number;
+  /** Phase 4 — which gateway owns this payment (existing rows default to zarinpal). */
+  gateway: PaymentGateway;
+  /** Billing currency shown to the buyer ("IRR" Toman-derived, or "USD" for Stripe). */
+  currency: "IRR" | "USD";
+  /** Nominal amount BEFORE any discount, in the gateway's minor unit (Rial / US cents). */
+  grossAmountMinor: number;
+  /** Phase 5 — affiliate/discount code applied at checkout, if any. */
+  discountCode?: string;
+  /** Phase 5 — when set this payment buys an artist subscription, not a licence. */
+  planId?: string;
   status: PaymentStatus;
   refId?: string;
   createdAt: string;

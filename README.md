@@ -251,6 +251,59 @@ in the dashboard's «درآمد و تسویه» tab (`GET /api/artist/earnings`;
 pass `?artistId=`); admins record payouts in the panel's «درآمد و تسویه»
 section (`GET`/`POST /api/admin/payouts`). Open balance = royalty − payouts.
 
+## Digital pattern sales (Phase 4)
+
+**Stripe for USD buyers.** The shared checkout (`POST /api/digital/checkout`)
+routes buyers by locale: Farsi → ZarinPal, English → Stripe (`STRIPE_SECRET_KEY`,
+or MOCK mode without it). Fulfillment is centralised in
+`src/lib/payments/fulfill.ts` — both gateways (and both ZarinPal + Stripe
+callback routes) mint entitlements / delist exclusives / redeem discount codes /
+send the purchase email through the same idempotent path.
+`POST /api/digital/stripe-webhook` handles live `checkout.session.completed`
+events (HMAC-SHA256 over `${ts}.${rawBody}`, 5-minute clock window); the
+browser's success redirect (`/api/digital/stripe-callback`) double-checks the
+session REST-side so a delayed webhook never strands a paying customer.
+
+**Multipart upload for XL masters.** Files over the 200 MB request-body ceiling
+upload straight from the browser to S3/R2 with SigV4 presigned part URLs
+(`src/lib/files/s3-multipart.ts`, dependency-free). Flow:
+`begin` → paginated presigned PUT URLs (16 MiB parts, 200/response) → browser
+PUTs with progress → `complete` (parts etags) creates the pending-review
+registry record; `abort` cleans up on failure. Master-files UI switches
+automatically when the active backend is `s3`.
+
+**ClamAV scanning.** `CLAMAV_ENABLED=1` enforces a scan on every master upload
+(web proxy `CLAMAV_URL` POST/scan, or raw clamd INSTREAM over TCP
+`CLAMAV_HOST`/`CLAMAV_PORT`). Infected files are rejected 422; an unreachable
+scanner blocks uploads with 503 — never a silent pass.
+
+**Email via Resend.** `RESEND_API_KEY` + `EMAIL_FROM` sends purchase
+confirmation (FA/EN template matched to buyer locale) and artist payout
+notifications. All sends are best-effort — fulfillment never blocks on SMTP.
+
+## Digital pattern sales (Phase 5)
+
+**Sales analytics.** `GET /api/artist/analytics` — 12-month gross series,
+licence mix, top patterns by revenue, plan quotas, and the artist's own
+affiliate codes. The dashboard's Earnings tab renders the monthly chart, quota
+bars and licence mix; per-pattern performance sits under it.
+
+**Discount & affiliate codes.** Admin creates codes in «کدهای تخفیف»
+(`/api/admin/codes`): percent-off, use cap, optional affiliate binding
+(`artistId` + `commissionPercent`). Buyers enter the code on the pattern page —
+`/api/digital/quote` previews the discounted price live; checkout re-validates
+server-side (`discountCode` on the payment record; `uses` only increments when
+the payment verifies). A code with an affiliate owner credits that artist with
+`commissionPercent` of the *discounted* gross on every redemption (any pattern,
+including other artists') — it stacks into the same balance as royalties.
+
+**Subscription plans.** Plans (starter/basic/pro/studio, `src/lib/data/plans.ts`)
+gate upload quotas (patterns/products) on `POST /api/artist/patterns` (402
+`plan_quota` when exceeded) and grant a royalty boost. Artists buy 30-day
+periods from their dashboard (`Plan → اشتراک`) through the same ZarinPal/mock
+pipeline as licences — fulfillment activates the plan
+(`fulfill.ts → activatePlan`). Admin comp/manage lives in «پلن‌های اشتراک».
+
 ## Performance notes
 
 - All page payloads render on demand; images use `next/image` with explicit `sizes`.

@@ -4,6 +4,9 @@ import { withNoStore } from "@/lib/http";
 import { clientIp, tooManyAttempts, recordAttempt, retryAfterSeconds } from "@/lib/rate-limit";
 import { allEarnings } from "@/lib/data/earnings";
 import { addPayout, listPayouts, royaltyPercent } from "@/lib/data/payouts";
+import { getContent } from "@/lib/data/store";
+import { findUserByArtistId } from "@/lib/data/users";
+import { sendPayoutRecordedEmail } from "@/lib/notify/email";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -60,5 +63,22 @@ export async function POST(req: Request) {
   }
 
   const rec = await addPayout({ artistId, amountToman, method, note, createdBy: session.id });
+
+  // Notify the artist (best-effort — email may be unconfigured in dev)
+  try {
+    const content = await getContent();
+    const artist = content.artists.find((a) => a.id === artistId);
+    const user = artist ? await findUserByArtistId(artistId) : null;
+    if (user?.email) {
+      await sendPayoutRecordedEmail({
+        to: user.email,
+        locale: "fa",
+        amountLabel: `${amountToman.toLocaleString("fa-IR")} تومان`,
+        method,
+      });
+    }
+  } catch {
+    /* email is best-effort */
+  }
   return NextResponse.json({ ok: true, payout: rec }, withNoStore());
 }
