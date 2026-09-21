@@ -123,6 +123,11 @@ export async function findUserById(id: string): Promise<StoredUser | null> {
   return users.find((u) => u.id === id) ?? null;
 }
 
+export async function findUserByArtistId(artistId: string): Promise<StoredUser | null> {
+  const users = await getAllUsers();
+  return users.find((u) => u.artistId === artistId) ?? null;
+}
+
 export interface ArtistSignupExtra {
   phone?: string;
   city?: string;

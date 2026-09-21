@@ -22,6 +22,7 @@ import { artistStats, enrichEducation, enrichPattern, enrichPortfolio, enrichPro
 import { dictionaries } from "@/lib/i18n/dictionary";
 import type { Locale } from "@/lib/i18n/types";
 import type { HomeSectionKey } from "@/lib/types";
+import { isExclusiveDelisted } from "@/lib/types";
 import { t } from "@/lib/utils";
 
 export async function generateMetadata({ params }: { params: Promise<{ locale: Locale }> }): Promise<Metadata> {
@@ -47,7 +48,9 @@ export default async function HomePage({ params }: { params: Promise<{ locale: L
   const enabled = site.homeSections.filter((s) => s.enabled).sort((a, b) => a.order - b.order);
   const on = (k: string) => enabled.some((s) => s.key === k);
 
-  const patterns = site.patterns.map((p) => enrichPattern(site, p));
+  // Phase 2 — exclusively-sold patterns are delisted from the storefront
+  const publicPatterns = site.patterns.filter((p) => !isExclusiveDelisted(p));
+  const patterns = publicPatterns.map((p) => enrichPattern(site, p));
   const products = site.products.slice().sort((a, b) => a.order - b.order).map((p) => enrichProduct(site, p));
   const portfolios = site.portfolios.map((p) => enrichPortfolio(site, p));
   const education = site.education.map((e) => enrichEducation(site, e));
@@ -57,8 +60,10 @@ export default async function HomePage({ params }: { params: Promise<{ locale: L
       const s = artistStats(site, a.id);
       return { ...a, featuredPattern: s.patterns[0] ?? null, portfolioPreview: s.portfolios.map((p) => p.cover), counts: { patterns: s.patterns.length, projects: s.portfolios.length } };
     });
-  const heroPatterns = site.hero.featuredPatternIds.map((id) => site.patterns.find((p) => p.id === id)).filter(Boolean) as typeof site.patterns;
-  const styleCounts = Object.fromEntries(site.categories.map((c) => [c.id, site.patterns.filter((p) => p.categoryId === c.id).length]));
+  const heroPatterns = site.hero.featuredPatternIds
+    .map((id) => publicPatterns.find((p) => p.id === id))
+    .filter(Boolean) as typeof site.patterns;
+  const styleCounts = Object.fromEntries(site.categories.map((c) => [c.id, publicPatterns.filter((p) => p.categoryId === c.id).length]));
   const featuredCats = site.categories.filter((c) => c.featured).sort((a, b) => a.order - b.order);
   const spaces = site.spaces.slice().sort((a, b) => a.order - b.order);
 

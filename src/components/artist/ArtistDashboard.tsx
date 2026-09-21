@@ -6,8 +6,10 @@ import Link from "next/link";
 import {
   BarChart3,
   Bell,
+  BookOpen,
   Check,
   CheckCircle2,
+  FileArchive,
   Crown,
   ExternalLink,
   Heart,
@@ -46,7 +48,7 @@ import { faNum, formatPrice, href } from "@/lib/utils";
 import type { Artist, Category, Colorway, Pattern, Product, Space } from "@/lib/types";
 import type { Order } from "@/lib/data/orders";
 
-type Tab = "overview" | "patterns" | "products" | "profile" | "stats" | "shop" | "plan";
+type Tab = "overview" | "patterns" | "products" | "profile" | "stats" | "shop" | "plan" | "earnings";
 type FormMode = "idle" | "new-pattern" | "new-product" | "edit-pattern" | "edit-product";
 
 interface ArtistData {
@@ -143,6 +145,7 @@ export function ArtistDashboard() {
     { id: "products", label: fa ? `محصولات (${data?.products.length ?? 0})` : `Products (${data?.products.length ?? 0})`, icon: <PackagePlus className="h-4 w-4" /> },
     { id: "profile", label: fa ? "پروفایل" : "Profile", icon: <User className="h-4 w-4" /> },
     { id: "stats", label: fa ? "آمار" : "Stats", icon: <BarChart3 className="h-4 w-4" /> },
+    { id: "earnings", label: fa ? "درآمد و تسویه" : "Earnings", icon: <DollarSign className="h-4 w-4" /> },
     { id: "shop", label: fa ? "خرید از فروشگاه" : "Shop", icon: <ShoppingBag className="h-4 w-4" /> },
     { id: "plan", label: fa ? "پلن و پروفایل عمومی" : "Plan & Public Profile", icon: <Crown className="h-4 w-4" /> },
   ];
@@ -179,6 +182,14 @@ export function ArtistDashboard() {
             </div>
           </div>
           <div className="flex items-center gap-2 pb-1">
+            <Link href={href(locale as "fa" | "en", "/artist/files")} className="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-sm text-foreground-secondary transition hover:border-accent hover:text-accent">
+              <FileArchive className="h-3.5 w-3.5" />
+              {fa ? "فایل‌های ماستر" : "Master files"}
+            </Link>
+            <Link href={href(locale as "fa" | "en", "/upload-guide")} className="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-sm text-foreground-secondary transition hover:border-accent hover:text-accent">
+              <BookOpen className="h-3.5 w-3.5" />
+              {fa ? "راهنمای آپلود" : "Upload guide"}
+            </Link>
             <Link href={href(locale as "fa" | "en", "/shop")} className="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-sm text-foreground-secondary transition hover:border-accent hover:text-accent">
               <Store className="h-3.5 w-3.5" />
               {fa ? "فروشگاه" : "Shop"}
@@ -319,6 +330,7 @@ export function ArtistDashboard() {
             {tab === "stats" && <StatsPanel data={data} fa={fa} locale={locale} orders={orders} />}
             {tab === "shop" && <ShopPanel fa={fa} locale={locale} />}
             {tab === "plan" && <PlanPanel fa={fa} locale={locale} />}
+            {tab === "earnings" && <EarningsPanel fa={fa} locale={locale} />}
           </main>
         </div>
       </div>
@@ -796,19 +808,54 @@ function ShopPanel({ fa, locale }: { fa: boolean; locale: string }) {
 function PlanPanel({ fa, locale }: { fa: boolean; locale: string }) {
   const [artist, setArtist] = useState<Artist | null>(null);
   const [loading, setLoading] = useState(true);
+  const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
+  const [buying, setBuying] = useState<string | null>(null);
+  const [buyError, setBuyError] = useState("");
 
   useEffect(() => {
     void (async () => {
       try {
-        const r = await fetch("/api/artist/profile", { ...SESSION_FETCH });
+        const [r, a] = await Promise.all([
+          fetch("/api/artist/profile", { ...SESSION_FETCH }),
+          fetch("/api/artist/analytics", { ...SESSION_FETCH }),
+        ]);
         if (r.ok) {
           const d = (await r.json()) as { ok: boolean; artist: Artist | null };
           setArtist(d.artist);
+        }
+        if (a.ok) {
+          const ad = (await a.json()) as { ok: boolean } & AnalyticsData;
+          if (ad.ok) setAnalytics(ad);
         }
       } catch { /* non-fatal */ }
       finally { setLoading(false); }
     })();
   }, []);
+
+  // Phase 5 — real plan purchase through the shared gateway+fulfill pipeline
+  async function buyPlan(planId: string) {
+    if (buying) return;
+    setBuying(planId);
+    setBuyError("");
+    try {
+      const r = await fetch("/api/artist/plan/checkout", {
+        ...SESSION_FETCH,
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ planId, locale }),
+      });
+      const d = (await r.json()) as { ok: boolean; redirectUrl?: string; error?: string };
+      if (!r.ok || !d.redirectUrl) {
+        setBuyError(fa ? `خطا: ${d.error ?? r.status}` : `Error: ${d.error ?? r.status}`);
+        return;
+      }
+      window.location.href = d.redirectUrl;
+    } catch {
+      setBuyError(fa ? "خطای شبکه." : "Network error.");
+    } finally {
+      setBuying(null);
+    }
+  }
 
   if (loading) return <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-accent" /></div>;
 
@@ -915,14 +962,44 @@ function PlanPanel({ fa, locale }: { fa: boolean; locale: string }) {
               <Button
                 className="mt-6 w-full"
                 variant={plan.highlight ? "primary" : "outline"}
-                onClick={() => alert(fa ? "سیستم پرداخت به‌زودی فعال می‌شود." : "Payment system coming soon.")}
+                disabled={buying != null}
+                onClick={() => buyPlan(plan.id)}
               >
-                <Star className="h-4 w-4" />
-                {fa ? "خرید پلن" : "Get plan"}
+                {buying === plan.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Star className="h-4 w-4" />}
+                {buying === plan.id
+                  ? fa ? "در حال اتصال به درگاه…" : "Connecting…"
+                  : analytics?.plan.id === plan.id
+                    ? fa ? "پلن فعلی شما — تمدید" : "Current plan — renew"
+                    : fa ? "خرید پلن" : "Get plan"}
               </Button>
             </div>
           ))}
         </div>
+        {buyError && <p className="mt-3 rounded-lg bg-error/10 px-3 py-2 text-sm text-error">{buyError}</p>}
+        {analytics && (
+          <div className="mt-4 rounded-xl border border-border bg-surface p-4 shadow-soft">
+            <p className="text-sm text-foreground-secondary">
+              {fa ? "پلن فعلی:" : "Current plan:"}{" "}
+              <strong className="text-foreground">{analytics.plan.id}</strong>
+              {analytics.plan.expiresAt ? (
+                <>
+                  {" — "}
+                  {fa ? "اعتبار تا" : "valid until"} {new Date(analytics.plan.expiresAt).toLocaleDateString(fa ? "fa-IR" : "en-US")}
+                </>
+              ) : null}
+              {analytics.plan.royaltyBoost > 0 ? (
+                <span className="ms-2 rounded-full bg-green-600/10 px-2 py-0.5 text-[11px] text-green-700 dark:text-green-300">
+                  +{analytics.plan.royaltyBoost}% {fa ? "رویلتی" : "royalty"}
+                </span>
+              ) : null}
+            </p>
+            <p className="mt-1 text-caption text-muted">
+              {fa
+                ? `سهمیه‌ها: الگو ${analytics.quotas.patterns.used}/${analytics.quotas.patterns.limit} · محصول ${analytics.quotas.products.used}/${analytics.quotas.products.limit}`
+                : `Quotas: patterns ${analytics.quotas.patterns.used}/${analytics.quotas.patterns.limit} · products ${analytics.quotas.products.used}/${analytics.quotas.products.limit}`}
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Rejected note */}
@@ -935,6 +1012,286 @@ function PlanPanel({ fa, locale }: { fa: boolean; locale: string }) {
           </p>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Earnings Panel (Phase 3 — royalty statement)                          */
+/* ------------------------------------------------------------------ */
+interface EarningsData {
+  artistId: string;
+  artistName?: { fa: string; en: string } | null;
+  royaltyPercent: number;
+  salesCount: number;
+  grossToman: number;
+  royaltyToman: number;
+  affiliateCount: number;
+  affiliateToman: number;
+  affiliateRows: {
+    orderId: string;
+    at: string;
+    code: string;
+    salePatternId: string;
+    saleTitle?: { fa: string; en: string } | null;
+    saleGrossToman: number;
+    commissionToman: number;
+  }[];
+  royaltyBoost: number;
+  paidOutToman: number;
+  balanceToman: number;
+  rows: {
+    orderId: string;
+    at: string;
+    patternId: string;
+    patternTitle?: { fa: string; en: string } | null;
+    license: string;
+    grossToman: number;
+    royaltyToman: number;
+  }[];
+}
+
+interface AnalyticsData {
+  plan: { id: string; priceToman: number; patternQuota: number; productQuota: number; royaltyBoost: number; expiresAt: string | null };
+  quotas: { patterns: { used: number; limit: number }; products: { used: number; limit: number } };
+  months: { label: string; gross: number; count: number }[];
+  totals: { sales: number; gross: number };
+  topPatterns: { titleFa: string; titleEn: string; sales: number; gross: number }[];
+  byLicense: { personal: number; commercial: number; exclusive: number };
+  codes: { code: string; percentOff: number; uses: number; maxUses: number; active: boolean; commissionPercent: number }[];
+}
+
+function EarningsPanel({ fa, locale }: { fa: boolean; locale: string }) {
+  const [data, setData] = useState<EarningsData | null>(null);
+  const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const [r, a] = await Promise.all([
+          fetch("/api/artist/earnings", { ...SESSION_FETCH }),
+          fetch("/api/artist/analytics", { ...SESSION_FETCH }),
+        ]);
+        if (!r.ok) throw new Error();
+        const d = (await r.json()) as { ok: boolean; earnings?: EarningsData };
+        if (!d.ok || !d.earnings) throw new Error();
+        setData(d.earnings);
+        if (a.ok) {
+          const ad = (await a.json()) as { ok: boolean } & AnalyticsData;
+          if (ad.ok) setAnalytics(ad);
+        }
+      } catch {
+        setError(true);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  if (loading) return <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-accent" /></div>;
+  if (error || !data) {
+    return <ErrorState message={fa ? "بارگذاری اطلاعات درآمد ممکن نشد." : "Could not load earnings."} onRetry={() => window.location.reload()} />;
+  }
+
+  const toman = (n: number) =>
+    fa ? `${n.toLocaleString("fa-IR")} تومان` : `${n.toLocaleString("en-US")} Toman`;
+  const licenseLabel = (lic: string) =>
+    lic === "exclusive" ? (fa ? "اختصاصی" : "Exclusive") : lic === "commercial" ? (fa ? "تجاری" : "Commercial") : (fa ? "شخصی" : "Personal");
+
+  const basePct = data.royaltyPercent;
+  const effectivePct = Math.min(90, basePct + data.royaltyBoost);
+  const kpis = [
+    { label: fa ? "فروشیده‌ها" : "Sales", value: fa ? data.salesCount.toLocaleString("fa-IR") : String(data.salesCount), icon: <ShoppingBag className="h-5 w-5" />, tone: "text-accent bg-accent/10" },
+    {
+      label: data.royaltyBoost > 0
+        ? fa
+          ? `درآمد شما (${effectivePct.toLocaleString("fa-IR")}٪ = پایه ${basePct.toLocaleString("fa-IR")}٪ + پلن ${data.royaltyBoost.toLocaleString("fa-IR")}٪+)`
+          : `Your share (${effectivePct}% = base ${basePct}% + plan +${data.royaltyBoost}%)`
+        : fa
+          ? `درآمد شما (${effectivePct.toLocaleString("fa-IR")}٪)`
+          : `Your share (${effectivePct}%)`,
+      value: toman(data.royaltyToman),
+      icon: <DollarSign className="h-5 w-5" />,
+      tone: "text-blue bg-blue/10",
+    },
+    { label: fa ? "درآمد افیلیت" : "Affiliate income", value: toman(data.affiliateToman), icon: <TrendingUp className="h-5 w-5" />, tone: "text-warning bg-warning/10" },
+    { label: fa ? "مانده قابل تسویه" : "Open balance", value: toman(data.balanceToman), icon: <Package className="h-5 w-5" />, tone: "text-success bg-success/10" },
+  ];
+
+  const maxMonthGross = analytics ? Math.max(1, ...analytics.months.map((m) => m.gross)) : 1;
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-2xl border border-border bg-surface p-5 shadow-soft">
+        <p className="font-semibold">{fa ? "درآمد فروش دیجیتال" : "Digital sales income"}</p>
+        <p className="mt-1 text-sm text-foreground-secondary">
+          {fa
+            ? `سهم شما از هر فروش تأییدشده ${effectivePct.toLocaleString("fa-IR")}٪ است؛ مانده پس از کسر تسویه‌های انجام‌شده به‌صورت دوره‌ای پرداخت می‌شود.`
+            : `You earn ${effectivePct}% of every verified sale; the open balance is settled periodically.`}
+        </p>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {kpis.map((k) => (
+          <div key={k.label} className="rounded-2xl border border-border bg-surface p-5 shadow-soft">
+            <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${k.tone}`}>{k.icon}</div>
+            <p className="mt-4 font-display text-lg font-bold tabular">{k.value}</p>
+            <p className="mt-1 text-caption text-foreground-secondary">{k.label}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Monthly sales chart (Phase 5) */}
+      {analytics && (
+        <div className="rounded-2xl border border-border bg-surface p-6 shadow-soft">
+          <div className="flex items-center gap-2">
+            <BarChart3 className="h-4 w-4 text-muted" />
+            <p className="font-semibold">{fa ? "روند فروش ۱۲ ماه اخیر" : "Sales — last 12 months"}</p>
+            <span className="ms-auto text-caption text-foreground-secondary tabular">
+              {fa ? `${analytics.totals.sales.toLocaleString("fa-IR")} فروش کل` : `${analytics.totals.sales} total sales`}
+            </span>
+          </div>
+          <div className="mt-5 flex h-24 items-end gap-1.5">
+            {analytics.months.map((m, i) => (
+              <div key={i} className="group relative flex-1 cursor-default" title={`${m.gross.toLocaleString(fa ? "fa-IR" : "en-US")} تومان · ${m.count}`}>
+                <div
+                  className="w-full rounded-t-sm bg-accent/40 transition-all group-hover:bg-accent"
+                  style={{ height: `${Math.max(3, Math.round((m.gross / maxMonthGross) * 100))}%` }}
+                />
+              </div>
+            ))}
+          </div>
+          <div className="mt-1.5 flex justify-between text-[10px] text-muted" dir="ltr">
+            <span>{analytics.months[0]?.label}</span>
+            <span>{analytics.months[analytics.months.length - 1]?.label}</span>
+          </div>
+          {/* licence mix + quotas */}
+          <div className="mt-5 grid gap-4 border-t border-border pt-4 sm:grid-cols-2">
+            <div>
+              <p className="text-caption text-foreground-secondary">{fa ? "ترکیب لایسنس‌ها" : "Licence mix"}</p>
+              <div className="mt-2 flex h-3 overflow-hidden rounded-full bg-background-secondary">
+                {(["personal", "commercial", "exclusive"] as const).map((k, i) => {
+                  const total = analytics.byLicense.personal + analytics.byLicense.commercial + analytics.byLicense.exclusive;
+                  const pct = total > 0 ? (analytics.byLicense[k] / total) * 100 : 0;
+                  const colors = ["#8fa08e", "#c99a92", "#5f7ea3"];
+                  return <div key={k} style={{ width: `${pct}%`, background: colors[i] }} title={`${k}: ${analytics.byLicense[k]}`} />;
+                })}
+              </div>
+              <div className="mt-2 flex gap-3 text-[11px] text-foreground-secondary">
+                <span>{fa ? "شخصی" : "Personal"}: {(fa ? analytics.byLicense.personal : analytics.byLicense.personal).toLocaleString(fa ? "fa-IR" : "en-US")}</span>
+                <span>{fa ? "تجاری" : "Commercial"}: {analytics.byLicense.commercial.toLocaleString(fa ? "fa-IR" : "en-US")}</span>
+                <span>{fa ? "اختصاصی" : "Exclusive"}: {analytics.byLicense.exclusive.toLocaleString(fa ? "fa-IR" : "en-US")}</span>
+              </div>
+            </div>
+            <div>
+              <p className="text-caption text-foreground-secondary">{fa ? "سهمیه‌ی پلن" : "Plan quotas"}</p>
+              {([
+                { k: "patterns", label: fa ? "الگوها" : "Patterns", q: analytics.quotas.patterns },
+                { k: "products", label: fa ? "محصولات" : "Products", q: analytics.quotas.products },
+              ] as const).map((row) => {
+                const pct = Math.min(100, (row.q.used / Math.max(1, row.q.limit)) * 100);
+                return (
+                  <div key={row.k} className="mt-2">
+                    <div className="flex justify-between text-[11px] text-foreground-secondary">
+                      <span>{row.label}</span>
+                      <span className="tabular" dir="ltr">{row.q.used}/{row.q.limit}</span>
+                    </div>
+                    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-background-secondary">
+                      <div className={`h-full rounded-full ${pct >= 100 ? "bg-error" : pct >= 80 ? "bg-warning" : "bg-success"}`} style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+              <p className="mt-2 text-[11px] text-muted">
+                {fa ? "پلن فعلی:" : "Current plan:"} <strong>{analytics.plan.id}</strong>
+                {analytics.plan.expiresAt ? ` · ${fa ? "تا" : "until"} ${new Date(analytics.plan.expiresAt).toLocaleDateString(fa ? "fa-IR" : "en-US")}` : ""}
+                {analytics.plan.royaltyBoost > 0 ? ` (+${analytics.plan.royaltyBoost}% royalty)` : ""}
+              </p>
+            </div>
+          </div>
+          {analytics.topPatterns.length > 0 && (
+            <div className="mt-5 border-t border-border pt-4">
+              <p className="text-caption text-foreground-secondary">{fa ? "پرفروش‌ترین طرح‌ها" : "Top patterns by revenue"}</p>
+              <ul className="mt-2 space-y-1.5">
+                {analytics.topPatterns.slice(0, 5).map((p, i) => (
+                  <li key={i} className="flex items-center justify-between text-sm">
+                    <span className="truncate">{locale === "fa" ? p.titleFa : p.titleEn}</span>
+                    <span className="shrink-0 tabular text-foreground-secondary" dir="ltr">
+                      {p.sales}× · {p.gross.toLocaleString(locale === "fa" ? "fa-IR" : "en-US")} {fa ? "ت" : "T"}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Affiliate ledger (Phase 5) */}
+      {data.affiliateRows.length > 0 && (
+        <div className="rounded-2xl border border-border bg-surface shadow-soft">
+          <p className="border-b border-border px-6 py-4 font-semibold">
+            {fa ? "درآمد همکاری در فروش (افیلیت)" : "Affiliate earnings"}
+          </p>
+          <div className="divide-y divide-border">
+            {data.affiliateRows.map((row) => (
+              <div key={`${row.orderId}-${row.code}`} className="flex flex-wrap items-center gap-3 px-6 py-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-warning/10 text-warning">%</div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">
+                    {row.saleTitle ? (locale === "fa" ? row.saleTitle.fa : row.saleTitle.en) : row.salePatternId}
+                  </p>
+                  <p className="text-caption text-foreground-secondary" dir="auto">
+                    {fa ? "کد" : "code"} <span dir="ltr" className="font-mono">{row.code}</span> ·{" "}
+                    {new Date(row.at).toLocaleDateString(fa ? "fa-IR" : "en-US")}
+                  </p>
+                </div>
+                <div className="text-end">
+                  <p className="text-sm font-semibold tabular text-warning">{toman(row.commissionToman)}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="rounded-2xl border border-border bg-surface shadow-soft">
+        <p className="border-b border-border px-6 py-4 font-semibold">{fa ? "جزئیات فروش‌ها" : "Sales ledger"}</p>
+        {data.rows.length === 0 ? (
+          <div className="p-6">
+            <EmptyState
+              title={fa ? "هنوز فروشی ندارید." : "No sales yet."}
+              description={fa ? "وقتی اولین طرح دیجیتال شما فروخته شود، اینجا نمایش داده می‌شود." : "Your digital sales will appear here."}
+            />
+          </div>
+        ) : (
+          <div className="divide-y divide-border">
+            {data.rows.map((row) => (
+              <div key={row.orderId} className="flex flex-wrap items-center gap-3 px-6 py-3.5">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-background-secondary">
+                  <Palette className="h-4 w-4 text-muted" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">
+                    {row.patternTitle ? (locale === "fa" ? row.patternTitle.fa : row.patternTitle.en) : row.patternId}
+                  </p>
+                  <p className="text-caption text-foreground-secondary" dir="auto">
+                    {licenseLabel(row.license)} · {new Date(row.at).toLocaleDateString(fa ? "fa-IR" : "en-US")}
+                  </p>
+                </div>
+                <div className="text-end">
+                  <p className="text-sm font-semibold tabular text-success">{toman(row.royaltyToman)}</p>
+                  <p className="text-caption text-foreground-secondary tabular">
+                    {fa ? "فروش:" : "gross:"} {toman(row.grossToman)}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -8,7 +8,7 @@ export async function getNavData(): Promise<NavData> {
     categories: site.categories.filter((c) => c.featured).sort((a, b) => a.order - b.order).map(({ slug, name, image }) => ({ slug, name, image })),
     spaces: site.spaces.map(({ slug, name, image }) => ({ slug, name, image })),
     artists: site.artists.map(({ slug, name, profession, avatar }) => ({ slug, name, profession, avatar })),
-    patterns: site.patterns.map(({ slug, title, image, sku }) => ({ slug, title, image, sku })),
+    patterns: site.patterns.filter((p) => !p.exclusiveSale).map(({ slug, title, image, sku }) => ({ slug, title, image, sku })),
     portfolios: site.portfolios.map(({ slug, title, cover }) => ({ slug, title, cover })),
     education: site.education.map(({ slug, title, image, type }) => ({ slug, title, image, type })),
     collections: site.collections.map(({ slug, title, cover }) => ({ slug, title, cover })),

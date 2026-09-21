@@ -37,6 +37,11 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 /data/*.json
+# private master-file binaries (digital downloads)
+/data/private/
+/data/wm-cache/
+# runtime user uploads (dev backend — served via /api/pub)
+/public/images/uploads/
 
 # local agent/tooling artifacts & logs (never commit these)
 /dev.log

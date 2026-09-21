@@ -81,6 +81,16 @@ export async function middleware(req: NextRequest) {
     }
   }
 
+  // /[locale]/downloads — buyer's digital library; any signed-in role
+  if (rest === "downloads" || rest.startsWith("downloads/")) {
+    if (!session) {
+      const loginUrl = req.nextUrl.clone();
+      loginUrl.pathname = `/${segments[0]}/login`;
+      loginUrl.searchParams.set("next", pathname);
+      return NextResponse.redirect(loginUrl);
+    }
+  }
+
   // /[locale]/owner/* — requires owner email or admin role
   if (rest === "owner" || rest.startsWith("owner/")) {
     const isOwnerSession =

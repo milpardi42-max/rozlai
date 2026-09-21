@@ -3,11 +3,16 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowUpRight } from "lucide-react";
 import { PatternDetailView } from "@/components/product/PatternDetailView";
+import { DigitalLicensePanel } from "@/components/product/DigitalLicensePanel";
 import { PatternCard } from "@/components/cards/PatternCard";
 import { ProductCard } from "@/components/cards/ProductCard";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { Reveal } from "@/components/ui/Reveal";
 import { enrichPattern, enrichProduct, getSite } from "@/lib/data/queries";
+import { listApprovedForPattern } from "@/lib/files/storage";
+import { toPublicMeta } from "@/lib/files/types";
+import { wmSrc } from "@/lib/files/watermark";
+import { isExclusiveDelisted } from "@/lib/types";
 import { dictionaries } from "@/lib/i18n/dictionary";
 import { LOCALES, type Locale } from "@/lib/i18n/types";
 import { href, t } from "@/lib/utils";
@@ -35,12 +40,27 @@ export default async function PatternPage({ params }: Props) {
   if (!raw) notFound();
   const d = dictionaries[locale];
   const p = enrichPattern(site, raw);
+  const delisted = isExclusiveDelisted(p);
   const related = site.patterns
-    .filter((x) => x.id !== p.id && (x.categoryId === p.categoryId || x.artistId === p.artistId))
+    .filter((x) => x.id !== p.id && !isExclusiveDelisted(x) && (x.categoryId === p.categoryId || x.artistId === p.artistId))
     .slice(0, 4)
     .map((x) => enrichPattern(site, x));
   const products = site.products.filter((x) => x.patternId === p.id).map((x) => enrichProduct(site, x));
   const spaces = site.spaces.filter((s) => p.spaceIds.includes(s.id));
+  // Phase 1: approved digital deliverables for the instant-download panel
+  const deliverableMeta = p.digital && !delisted
+    ? (await listApprovedForPattern(p.id)).map(toPublicMeta)
+    : [];
+
+  // Phase 2: digital patterns expose only watermarked previews publicly
+  const wmPattern = p.digital
+    ? {
+        ...p,
+        image: wmSrc(p.image),
+        gallery: (p.gallery ?? []).map(wmSrc),
+        colorways: p.colorways?.map((c) => ({ ...c, image: wmSrc(c.image), gallery: c.gallery?.map(wmSrc) })),
+      }
+    : p;
 
   return (
     <article className="pt-[calc(var(--header-h)+1.5rem)]">
@@ -61,7 +81,17 @@ export default async function PatternPage({ params }: Props) {
           <span className="text-foreground">{t(p.title, locale)}</span>
         </nav>
 
-        <PatternDetailView pattern={p} artist={p.artist} spaces={spaces} />
+        <PatternDetailView
+          pattern={wmPattern as typeof p}
+          artist={p.artist}
+          spaces={spaces}
+          soldExclusively={delisted}
+          digitalSlot={
+            p.digital && !delisted && deliverableMeta.length > 0 ? (
+              <DigitalLicensePanel patternId={p.id} licensePrices={p.licensePrices} files={deliverableMeta} />
+            ) : null
+          }
+        />
       </div>
 
       {products.length > 0 && (

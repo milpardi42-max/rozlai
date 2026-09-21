@@ -115,6 +115,43 @@ export interface Pattern {
   isNew: boolean;
   createdAt: string;
   likes: number;
+  /**
+   * Digital-download pattern (Phase 1): when true, the PDP shows the licence
+   * panel and buyers receive secure downloads after payment. Master files are
+   * attached separately via the private registry (src/lib/files/storage.ts).
+   */
+  digital?: boolean;
+  /** Price per licence tier (Toman / USD). Tiers without a price are not sold. */
+  licensePrices?: Partial<Record<LicenseTier, { fa: number; en: number }>>;
+  /**
+   * Phase 2 — set the moment an EXCLUSIVE licence sale is verified. The pattern
+   * is delisted from every public surface (listings, search, sitemap, home)
+   * and no further digital licences can be purchased; PDP shows a
+   * "sold exclusively" state while past buyers keep their downloads.
+   */
+  exclusiveSale?: { orderId: string; at: string };
+}
+
+/** Licence tiers for digital pattern sales (Patternbank-style). */
+export type LicenseTier = "personal" | "commercial" | "exclusive";
+
+/** Tiers whose master files are included when purchasing `purchased`. */
+export const LICENSE_COVERAGE: Record<LicenseTier, LicenseTier[]> = {
+  personal: ["personal"],
+  commercial: ["personal", "commercial"],
+  exclusive: ["personal", "commercial", "exclusive"],
+};
+
+/** Default prices (fa/en) used when a pattern has no explicit licensePrices. */
+export const DEFAULT_LICENSE_PRICES: Record<LicenseTier, { fa: number; en: number }> = {
+  personal: { fa: 490000, en: 15 },
+  commercial: { fa: 1980000, en: 59 },
+  exclusive: { fa: 7900000, en: 240 },
+};
+
+/** Phase 2 — an exclusive licence has transferred the rights to a single buyer. */
+export function isExclusiveDelisted(p: { exclusiveSale?: { orderId: string; at: string } | undefined }): boolean {
+  return Boolean(p.exclusiveSale);
 }
 
 export interface ColorOption {

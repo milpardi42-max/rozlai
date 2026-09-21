@@ -12,6 +12,9 @@ import {
   CalendarClock,
   Check,
   ChevronLeft,
+  Coins,
+  Crown,
+  FileArchive,
   FileText,
   Frame,
   GalleryHorizontalEnd,
@@ -50,6 +53,10 @@ import { ArtistsManager } from "@/components/admin/ArtistsManager";
 import { PortfoliosManager } from "@/components/admin/PortfoliosManager";
 import { AcademyManager } from "@/components/admin/AcademyManager";
 import { ReservationsManager } from "@/components/admin/ReservationsManager";
+import { FilesManager } from "@/components/admin/FilesManager";
+import { PayoutsManager } from "@/components/admin/PayoutsManager";
+import { CodesManager } from "@/components/admin/CodesManager";
+import { SubscriptionsManager } from "@/components/admin/SubscriptionsManager";
 import { useAuth, useLocale } from "@/components/providers/AppProviders";
 import { Button } from "@/components/ui/Button";
 import { Field, Input, Select, Textarea } from "@/components/ui/Input";
@@ -75,6 +82,10 @@ type Section =
   | "portfolios"
   | "education"
   | "banners"
+  | "master-files"
+  | "payouts"
+  | "codes"
+  | "subscriptions"
   | "seo"
   | "announcement-bars";
 
@@ -134,6 +145,10 @@ const NAV_GROUPS: NavGroup[] = [
       { id: "buyers", label: "خریداران", icon: <ShoppingBag className="h-4 w-4" /> },
       { id: "reservations", label: "رزرو رویدادها", icon: <CalendarClock className="h-4 w-4" /> },
       { id: "artists-signup", label: "هنرمندان / طراحان", icon: <Palette className="h-4 w-4" /> },
+      { id: "master-files", label: "فایل‌های ماستر", icon: <FileArchive className="h-4 w-4" /> },
+      { id: "payouts", label: "درآمد و تسویه", icon: <Coins className="h-4 w-4" /> },
+      { id: "codes", label: "کدهای تخفیف", icon: <Tag className="h-4 w-4" /> },
+      { id: "subscriptions", label: "پلن‌های اشتراک", icon: <Crown className="h-4 w-4" /> },
     ],
   },
   {
@@ -479,6 +494,10 @@ export function AdminApp() {
               {section === "buyers" && <BuyersManager />}
               {section === "reservations" && <ReservationsManager />}
               {section === "artists-signup" && <ArtistsSignupManager />}
+              {section === "master-files" && <FilesManager />}
+              {section === "payouts" && <PayoutsManager />}
+              {section === "codes" && <CodesManager />}
+              {section === "subscriptions" && <SubscriptionsManager />}
               {section === "home" && <HomeSectionsManager data={data} update={update} />}
               {section === "hero" && (
                 <HeroEditor
